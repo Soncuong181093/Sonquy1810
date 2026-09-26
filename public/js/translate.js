@@ -71,15 +71,19 @@
 
     document.head.appendChild(style);
     overlay.appendChild(spinner);
-    if (document.body) document.body.appendChild(overlay);
-    else document.addEventListener('DOMContentLoaded', function () {
+
+    if (document.body) {
         document.body.appendChild(overlay);
-    });
+    } else {
+        document.addEventListener('DOMContentLoaded', function () {
+            document.body.appendChild(overlay);
+        });
+    }
 
     function removeOverlay() {
         overlay.style.opacity = '0';
         setTimeout(function () {
-            overlay.parentNode && overlay.parentNode.removeChild(overlay);
+            if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
         }, 420);
     }
 
@@ -90,9 +94,7 @@
     }
 
     function setCookieRaw(name, value) {
-        // Set on current host (works for github.io subdomain)
         document.cookie = name + '=' + value + '; path=/; SameSite=Lax';
-        // Try setting on root domain (github.io) too, in case page is on *.github.io
         var host = location.hostname;
         var parts = host.split('.');
         if (parts.length >= 2) {
@@ -105,63 +107,64 @@
     }
 
     function setGoogtransCookie(lang) {
-        // Google Translate expects: /source/target  (source usually 'en' or 'auto')
-        var value = '/en/' + lang;
-        setCookieRaw('googtrans', value);
+        // Google Translate expects: /source/target
+        setCookieRaw('googtrans', '/en/' + lang);
     }
 
-    // ── Country detection (multi-fallback, no API key needed) ─────────────
-    async function fetchJSON(url, timeoutMs) {
+    // ── Fetch with timeout ────────────────────────────────────────────────
+    function fetchJSON(url, timeoutMs) {
         var ctrl = new AbortController();
         var timer = setTimeout(function () { ctrl.abort(); }, timeoutMs || 4000);
-        try {
-            var res = await fetch(url, { signal: ctrl.signal, cache: 'no-store' });
-            clearTimeout(timer);
-            if (!res.ok) throw new Error('HTTP ' + res.status);
-            return await res.json();
-        } catch (e) {
-            clearTimeout(timer);
-            throw e;
-        }
+        return fetch(url, { signal: ctrl.signal, cache: 'no-store' })
+            .then(function (res) {
+                clearTimeout(timer);
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                return res.json();
+            })
+            .catch(function (e) {
+                clearTimeout(timer);
+                throw e;
+            });
     }
 
+    // ── Country detection (multi-fallback, no API key) ────────────────────
     async function getCountryCode() {
-        // 1) ipapi.co — free, no key, CORS enabled
+        // 1) ipapi.co — free, CORS enabled
         try {
             var d1 = await fetchJSON('https://ipapi.co/json/');
             if (d1 && d1.country_code) return d1.country_code.toUpperCase();
-        } catch (e) { /* next */ }
+        } catch (e) {}
 
-        // 2) ipwho.is — free, no key, CORS enabled
+        // 2) ipwho.is — free, CORS enabled
         try {
             var d2 = await fetchJSON('https://ipwho.is/');
             if (d2 && d2.country_code) return d2.country_code.toUpperCase();
-        } catch (e) { /* next */ }
+        } catch (e) {}
 
-        // 3) ipinfo.io without token (limited but often works)
+        // 3) ipinfo.io (no token, limited)
         try {
             var d3 = await fetchJSON('https://ipinfo.io/json');
             if (d3 && d3.country) return d3.country.toUpperCase();
-        } catch (e) { /* next */ }
+        } catch (e) {}
 
-        // 4) Cloudflare trace (works via text, not JSON)
+        // 4) Cloudflare trace (text, not JSON)
         try {
             var res = await fetch('https://www.cloudflare.com/cdn-cgi/trace', { cache: 'no-store' });
             var txt = await res.text();
             var m = txt.match(/^loc=([A-Z]{2})$/m);
             if (m) return m[1].toUpperCase();
-        } catch (e) { /* next */ }
+        } catch (e) {}
 
         // 5) Browser language fallback (e.g. "vi-VN" → VN)
         try {
             var nav = (navigator.language || '').split('-');
             if (nav.length === 2) return nav[1].toUpperCase();
-        } catch (e) { /* ignore */ }
+        } catch (e) {}
 
         return '';
     }
 
-    // ── Wait for Google Translate ────────────────────────────────────────
+    // ── Wait for Google Translate to finish ───────────────────────────────
     function waitForTranslation(timeout) {
         return new Promise(function (resolve) {
             var html = document.documentElement;
@@ -182,7 +185,7 @@
     async function run() {
         var existing = getGoogtransCookie();
 
-        // Cookie already set → wait for Google to translate, then reveal
+        // Cookie already set → wait for translation, then reveal
         if (existing && existing !== '/en/' && existing !== '/en/undefined') {
             if (existing !== '/en/en') {
                 await waitForTranslation(6000);
@@ -203,7 +206,6 @@
         }
 
         setGoogtransCookie(targetLang);
-        // Small delay to ensure cookie is written before reload
         setTimeout(function () { location.reload(); }, 80);
     }
 
